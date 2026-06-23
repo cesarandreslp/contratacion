@@ -170,13 +170,23 @@
 
 > **Hallazgo crítico:** `C:\contratacion` NO era repo git, no tenía `.vercel`, ni `node_modules`, ni `.env`. → El proyecto **nunca se había desplegado realmente desde aquí**; lo que el usuario vio en Vercel/GitHub no es este código. Falta unir código ↔ repo ↔ Vercel ↔ Neon.
 
-### Próximos pasos (Sesión 3 en adelante)
+### Sesión 2 (cont.) — 22 de Junio de 2026 — Persistencia probada + git
 
-- [ ] **Unir el stack:** git init + commit aquí → push a GitHub `SEEL249` (con PAT, no contraseña) → Vercel desplegando este repo.
-- [ ] **Conectar Neon:** poner `DATABASE_URL` en `.env.local` + variables en Vercel → `prisma migrate deploy` → `db:seed`.
-- [ ] Verificar guardado de datos contra Neon (smoke test).
+| Actividad | Resultado |
+|-----------|-----------|
+| Migración inicial Prisma | `prisma/migrations/20260622000000_init/` (307 líneas SQL), generada con `migrate diff` (sin BOM). |
+| Smoke test de persistencia | PostgreSQL embebido real → migración + insertar tenant/usuario/contrato → leer de vuelta → **✅ datos se guardan y leen OK** (incl. Decimal y relaciones anidadas). `prisma/smoke-test.ts`. |
+| CI GitHub Actions | `.github/workflows/ci.yml` (install/generate/lint/typecheck/test/build). |
+| Repositorio git | `git init` + commit inicial `5967f28` (80 archivos, node_modules excluido). **Sin push aún** (requiere PAT). |
+
+> **El código y la capa de datos están VERIFICADOS de punta a punta.** Lo único que falta para producción depende de credenciales del usuario.
+
+### Próximos pasos (requieren acción del usuario)
+
+- [ ] **Push a GitHub `SEEL249`:** generar Personal Access Token y `git remote add origin … && git push -u origin main` (o dármelo para hacerlo).
+- [ ] **Conectar Neon:** poner `DATABASE_URL` en `.env.local` → `npx prisma migrate deploy` → `npm run db:seed`.
+- [ ] **Vercel:** configurar variables (`DATABASE_URL`, `AUTH_SECRET`, `AUTH_URL`, `GROK_API_KEY`, `BLOB_READ_WRITE_TOKEN`, `RESEND_API_KEY`, `MAIL_FROM`) y desplegar desde el repo real.
 - [ ] **Validar con PO (Cesar):** naturaleza del "documento de parafiscales" + tarifas/IBC vigentes.
-- [ ] CI con GitHub Actions (lint/typecheck/test) + `migrate deploy` automático.
 - [ ] 🔐 **Rotar contraseñas de Neon y GitHub compartidas en el chat.**
 
 ---
