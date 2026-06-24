@@ -12,11 +12,16 @@ async function main() {
   const pwd = hashPassword("Demo1234*");
 
   // --- Superadmin OSS (sin tenant) ---
-  await prisma.user.upsert({
-    where: { tenantId_email: { tenantId: null as never, email: "admin@oss.co" } },
-    update: {},
-    create: { email: "admin@oss.co", nombre: "OSS Admin", role: "SUPERADMIN", passwordHash: pwd },
+  // No se puede usar upsert con la clave compuesta tenantId_email cuando
+  // tenantId es null (limitación de Prisma), así que verificamos manualmente.
+  const existingSuperadmin = await prisma.user.findFirst({
+    where: { tenantId: null, email: "admin@oss.co" },
   });
+  if (!existingSuperadmin) {
+    await prisma.user.create({
+      data: { email: "admin@oss.co", nombre: "OSS Admin", role: "SUPERADMIN", passwordHash: pwd },
+    });
+  }
 
   // --- Tenant demo ---
   const tenant = await prisma.tenant.upsert({
