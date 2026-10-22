@@ -54,17 +54,6 @@ export const artifactContent = z
 export type ArtifactContent = z.infer<typeof artifactContent>;
 
 // ---------------------------------------------------------------- creación y elaboración
-export const crearExpedienteInput = z.object({
-  originUnitId: uuid,
-  contractTypeId: uuid,
-  planItemId: uuid,
-  object: z.string().min(20).max(4000),
-  estimatedValue: money,
-  estimatedDurationDays: z.coerce.number().int().positive(),
-  unspscCodes: z.array(z.string().regex(/^\d{8}$/)).min(1),
-});
-export type CrearExpedienteInput = z.infer<typeof crearExpedienteInput>;
-
 export const guardarBorradorInput = z.object({ artifactId: uuid, content: artifactContent });
 export const versionarInput = z.object({ artifactId: uuid, metadata: z.record(z.unknown()).default({}) });
 export const ratificarAutoriaInput = z.object({

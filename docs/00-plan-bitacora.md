@@ -208,6 +208,15 @@
 | Vista del expediente | `/expedientes` y `/expedientes/[id]`: estado, artefactos, observaciones, VoBo y checklist de compuertas por evento ejecutable; transiciones desde la UI. | ✅ | Probada en `next dev` contra PGlite: login, checklist, SOLICITAR_CDP, error CDP_INSUFICIENTE, EXPEDIR_CDP → jurídica. |
 | Pruebas | e2e SQL sobre init + CLM (408 sentencias OK en PGlite) + `tests/clm-schema.test.ts`. | ✅ | `prisma/tests/run.sh` (Docker) sin ejecutar: Docker Desktop no arranca. |
 
+### Sesión 3 (cont.) — 22 de Octubre de 2026 — Configuración del CLM y creación de expedientes
+
+| Actividad | Descripción | Estado | Observaciones |
+|-----------|-------------|--------|--------------|
+| Migración CLM en Neon | `20261022120000_clm_core` aplicada a mano con `prisma migrate deploy`: Vercel no despliega el repo desde el 24-jun (integración desconectada). | ✅ | Verificado: 30 tablas en `clm` con RLS, 31 transiciones, 18 compuertas, datos de `public` intactos. |
+| Configuración CLM | `/expedientes/configuracion`: activar CLM (ADMIN_TENANT), organigrama, roles con alcance, delegación, tipologías, PAA (crear, ítems, aprobar). | ✅ | Todo con RLS salvo la activación (`withClmOwner`). |
+| Crear expediente | `/expedientes/nuevo`: unidad donde elabora, tipología, ítem de PAA aprobado; crea los artefactos que exige la tipología. | ✅ | |
+| Verificación | Navegador contra PGlite desde una entidad sin CLM: activar → organigrama → roles → tipología → PAA → aprobar → crear expediente; intento sin rol bloqueado por RLS. | ✅ | 57 tests vitest, build OK. |
+
 ---
 
 ## Índice de documentación

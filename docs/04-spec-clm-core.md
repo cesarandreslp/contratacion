@@ -347,6 +347,15 @@ export async function dispararTransicion(input: TransitionCommand) {
 - **Subsanar y reenviar**: se insertan las respuestas (append-only) y luego se llama `REENVIAR`. No es una sola transacción, pero no hace falta: si falla el reenvío, las respuestas quedan registradas y el usuario reintenta. El `CONFLICTO_DE_VERSION` evita dobles envíos.
 - **Creación multi-área**: el expediente nace en la unidad origen del elaborador (RLS lo exige). El enrutamiento a jurídica lo decide la BD al expedir el CDP; la app nunca elige la unidad revisora.
 - **Habilitar usuarios**: un `User` de Prisma solo participa en el CLM si tiene fila en `clm.users` y membresías en `clm.user_memberships`. El rol de Prisma (`PERSONA_CONTRATACION`, etc.) da acceso a la ruta; las membresías deciden qué ve y qué puede hacer.
+- **Configuración** (`/expedientes/configuracion`):
+  - **Activación**: un `ADMIN_TENANT` de Prisma activa el CLM. Eso crea `clm.tenants`, la jurídica central y la primera membresía `ADMIN_ENTIDAD` (alcance entidad), y corre `app.bootstrap_tenant`. Es el único paso que usa `withClmOwner` (sin RLS), porque la membresía que la RLS exige todavía no existe.
+  - **Resto con RLS**: organigrama, roles por unidad, delegación, tipologías y PAA. Solo `ADMIN_ENTIDAD` configura y solo `PLANEACION` toca el PAA.
+  - **Otorgar un rol** agrega al usuario a `clm.users` en la misma transacción: el alta como dueño y la membresía con RLS. Si la RLS rechaza, se revierte todo.
+  - **Revocar** deja `valid_to` en ayer: la membresía no se borra y queda en la bitácora.
+  - **Aprobar el PAA** lo congela.
+- **Crear expediente** (`/expedientes/nuevo`):
+  - Solo ofrece las unidades donde la sesión es `ELABORADOR` o `JEFE_AREA`, y los ítems de un PAA aprobado.
+  - Crea el expediente en `BORRADOR` con un artefacto vacío por cada uno que exige la tipología.
 
 ---
 
@@ -388,9 +397,9 @@ bash prisma/tests/run.sh
 
 Pendientes de producto que esta capa ya soporta pero no cubre en UI:
 
-- crear expediente y editar artefactos por bloques (hoy solo se ven y se transicionan);
+- editar artefactos por bloques, versionar y ratificar autoría desde la UI;
+- registrar cotizaciones, correr la verificación de integridad y resolver hallazgos desde la UI. Sin registro mercantil cargado (`ref.company_registry`), toda cotización sale `SIN_REGISTRO` y hay que descartarla con justificación;
 - vistas de diff y bitácora;
-- datos de arranque por entidad (unidades, membresías, tipologías, PAA): hoy se cargan por SQL;
 - conectores de ingesta;
 - adaptador real de firma;
 - pantalla de matriz de delegación.

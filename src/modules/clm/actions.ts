@@ -1,7 +1,10 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
+import { ZodError } from "zod";
 import { withClm } from "@/lib/db/clm";
+import { crearExpedienteForm } from "./configuracion-schema";
 import {
   clmErrorCode,
   transitionCommand,
@@ -114,4 +117,56 @@ export async function dispararTransicion(input: TransitionCommand): Promise<Resu
       select clm.preview_gates(${cmd.dossierId}::uuid, ${cmd.event}) as failures`);
     return { ok: false, error: transitionErrorFromCode(code, failures) };
   }
+}
+
+/** Opciones del formulario de nuevo expediente: solo unidades donde la sesión elabora. */
+export async function opcionesNuevoExpediente() {
+  return withClm(async (tx) => {
+    const unidades = await tx.$queryRaw<{ id: string; name: string }[]>`
+      select u.id::text, u.name from clm.organizational_units u
+       where u.active and app.covers('{ELABORADOR,JEFE_AREA}', u.id) order by u.name`;
+    const tipologias = await tx.$queryRaw<{ id: string; name: string }[]>`
+      select id::text, name from clm.contract_types order by name`;
+    const items = await tx.$queryRaw<{ id: string; label: string }[]>`
+      select i.id::text, i.code || ' · ' || u.name || ' · ' || i.description as label
+        from clm.procurement_plan_items i
+        join clm.procurement_plans p on p.id = i.plan_id and p.status = 'APROBADO'
+        join clm.organizational_units u on u.id = i.unit_id
+       order by p.fiscal_year desc, i.code`;
+    return { unidades, tipologias, items };
+  });
+}
+
+/** Crea el expediente en BORRADOR con un artefacto vacío por cada uno que exige la tipología. */
+export async function crearExpediente(
+  _prev: { error: string } | null,
+  fd: FormData,
+): Promise<{ error: string }> {
+  let id: string;
+  try {
+    const e = crearExpedienteForm.parse(Object.fromEntries(fd));
+    id = await withClm(async (tx, tenantId) => {
+      const [row] = await tx.$queryRaw<{ id: string }[]>`
+        insert into clm.dossiers (tenant_id, origin_unit_id, contract_type_id, plan_item_id, object,
+                                  estimated_value, estimated_duration_days, unspsc_codes)
+        values (${tenantId}, ${e.originUnitId}::uuid, ${e.contractTypeId}::uuid, ${e.planItemId}::uuid, ${e.object},
+                ${e.estimatedValue}, ${e.estimatedDurationDays}, ${e.unspscCodes})
+        returning id::text`;
+      await tx.$executeRaw`
+        insert into clm.artifacts (tenant_id, dossier_id, kind, title)
+        select ${tenantId}, ${row.id}::uuid, k, initcap(replace(k, '_', ' '))
+          from clm.contract_types t, unnest(t.required_artifacts) k
+         where t.id = ${e.contractTypeId}::uuid`;
+      return row.id;
+    });
+  } catch (err) {
+    if (err instanceof ZodError) return { error: err.issues[0]?.message ?? "Datos inválidos" };
+    if (/row-level security|permission denied/i.test(String(err))) {
+      return { error: "No tiene rol de elaborador en esa unidad." };
+    }
+    console.error(err);
+    return { error: "No se pudo crear el expediente." };
+  }
+  revalidatePath("/expedientes");
+  redirect(`/expedientes/${id}`);
 }
