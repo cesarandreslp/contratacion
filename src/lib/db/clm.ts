@@ -11,16 +11,31 @@ import { requireTenant } from "@/lib/auth/session";
 export type ClmTx = Prisma.TransactionClient;
 
 /** Ejecuta `fn` como el usuario de la sesión (RLS activa). Todo dentro de una transacción. */
-export async function withClm<T>(fn: (tx: ClmTx) => Promise<T>): Promise<T> {
+export async function withClm<T>(fn: (tx: ClmTx, tenantId: string, userId: string) => Promise<T>): Promise<T> {
+  return conClaims(true, fn);
+}
+
+/**
+ * Como withClm pero SIN bajar de rol: la RLS no aplica. Solo para el arranque
+ * del CLM de una entidad (crear clm.tenants / clm.users, primera membresía),
+ * donde todavía no existe la membresía que la RLS exige. Quien llama verifica
+ * el permiso en la app. Los claims quedan puestos para que la bitácora registre
+ * al actor.
+ */
+export async function withClmOwner<T>(fn: (tx: ClmTx, tenantId: string, userId: string) => Promise<T>): Promise<T> {
+  return conClaims(false, fn);
+}
+
+async function conClaims<T>(
+  bajarRol: boolean,
+  fn: (tx: ClmTx, tenantId: string, userId: string) => Promise<T>,
+): Promise<T> {
   const { ctx } = await requireTenant();
-  const claims = JSON.stringify({
-    sub: ctx.userId,
-    role: "authenticated",
-    app_metadata: { tenant_id: ctx.tenantId },
-  });
+  const tenantId = ctx.tenantId!;
+  const claims = JSON.stringify({ sub: ctx.userId, role: "authenticated", app_metadata: { tenant_id: tenantId } });
   return prisma.$transaction(async (tx) => {
     await tx.$queryRaw`select set_config('request.jwt.claims', ${claims}, true)`;
-    await tx.$executeRawUnsafe("set local role authenticated");
-    return fn(tx);
+    if (bajarRol) await tx.$executeRawUnsafe("set local role authenticated");
+    return fn(tx, tenantId, ctx.userId);
   });
 }

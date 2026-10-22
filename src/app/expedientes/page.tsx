@@ -14,6 +14,10 @@ export default async function ExpedientesPage() {
   return (
     <main>
       <h1>Expedientes precontractuales</h1>
+      <p style={{ display: "flex", gap: "1rem" }}>
+        <Link href="/expedientes/nuevo">+ Nuevo expediente</Link>
+        <Link href="/expedientes/configuracion">Configuración del CLM</Link>
+      </p>
       {expedientes.length === 0 ? (
         <p style={{ color: "var(--muted)" }}>No tiene expedientes visibles en sus dependencias.</p>
       ) : (
