@@ -1,21 +1,30 @@
 # 04 — Especificación técnica: Core Engine CLM (sector público)
 
-> Estado: **propuesta v1 — 22 oct 2026**. Ejecutable: el esquema corre y pasa la prueba end-to-end.
+> Estado: **v1 sobre Neon — 22 oct 2026**. Ejecutable: el esquema corre, pasa la prueba end-to-end y tiene una primera vista (`/expedientes`).
 >
 > | Artefacto | Ruta |
 > |---|---|
-> | DDL + RLS + PL/pgSQL (FSM, compuertas, auditoría, RAG) | [`supabase/migrations/20261022000000_clm_core.sql`](../supabase/migrations/20261022000000_clm_core.sql) |
-> | Prueba end-to-end (todo el ciclo, 40+ aserciones) | [`supabase/tests/clm_core_test.sql`](../supabase/tests/clm_core_test.sql) · `bash supabase/tests/run.sh` |
-> | Contratos Zod + interfaces TS | [`src/modules/clm/schema.ts`](../src/modules/clm/schema.ts) |
+> | DDL + RLS + PL/pgSQL (FSM, compuertas, auditoría, RAG), schema `clm` | [`prisma/migrations/20261022120000_clm_core/migration.sql`](../prisma/migrations/20261022120000_clm_core/migration.sql) |
+> | Prueba end-to-end (todo el ciclo, 40+ aserciones) | [`prisma/tests/clm_core_test.sql`](../prisma/tests/clm_core_test.sql) · `bash prisma/tests/run.sh` |
+> | Sesión con RLS desde Prisma | [`src/lib/db/clm.ts`](../src/lib/db/clm.ts) |
+> | Contratos Zod + interfaces TS · Server Actions | [`src/modules/clm/schema.ts`](../src/modules/clm/schema.ts) · [`src/modules/clm/actions.ts`](../src/modules/clm/actions.ts) |
+> | Vista del expediente con checklist de compuertas | [`src/app/expedientes/`](../src/app/expedientes/) |
 
-> ⚠️ **Decisión pendiente de stack.** El repo hoy corre Prisma + Neon + Auth.js con aislamiento en la app (`src/lib/db/tenant-scope.ts`, RFC 03 §2, "RLS diferido"). Esta especificación exige Supabase + RLS. No son compatibles a medias: con RLS la autoridad de seguridad pasa a la base de datos, y las consultas deben ir con el JWT del usuario (`@supabase/ssr`), no con un cliente privilegiado. El esquema SQL de aquí es Postgres estándar salvo `auth.*` y `storage.*`; el resto (FSM, compuertas, auditoría) sirve igual en Neon si se decide no migrar, poniendo el `tenant_id`/`sub` en `request.jwt.claims` por transacción.
+> **Decisión de stack (22 oct 2026): se queda en Neon + Prisma + Auth.js.** El SQL es Postgres estándar; lo que en Supabase dan `auth.*` y PostgREST aquí lo da la app:
+>
+> - Todo el modelo vive en el schema **`clm`**. Prisma solo gestiona `public`, así que `prisma migrate` no ve estas tablas como deriva.
+> - `clm.tenants` y `clm.users` **extienden** `public."Tenant"` y `public."User"`. Los ids son los `cuid` de Prisma (`text`); el resto de entidades usa `uuid`.
+> - `auth.jwt()` / `auth.uid()` son un shim que lee `request.jwt.claims`. `withClm()` los fija por transacción desde la sesión de Auth.js y baja al rol `authenticated`, de modo que la RLS se aplica en todo lo que el usuario dispara.
+> - **No hay `service_role`**: las tareas de sistema (webhook de firma, ingesta) corren con el rol dueño de las tablas, que no pasa por RLS, y declaran `{"role":"service_role"}` en los claims para la FSM.
+> - **Archivos en Vercel Blob**, no en Supabase Storage: ruta `{tenant}/{dossier}/…`, y el acceso se autoriza en la app con `app.can_read_dossier`.
+> - El wrapper tenant-scoped de Prisma (`src/lib/db/tenant-scope.ts`) sigue sirviendo al módulo de contratistas existente; el CLM no lo usa.
 
 ---
 
 ## 1. Principios
 
 1. **La base de datos es la autoridad.** Las reglas que tienen consecuencias legales (quién puede actuar, qué compuerta bloquea, qué es inmutable) viven en PostgreSQL. Zod y la UI solo adelantan el rechazo y mejoran el mensaje. Si alguien se salta la app, la BD sigue diciendo que no.
-2. **Un solo escritor de estado.** `public.transition()` es la única vía para mover un expediente. Un trigger rechaza cualquier otro `UPDATE` de los campos que controla la FSM, incluso con `service_role`.
+2. **Un solo escritor de estado.** `clm.transition()` es la única vía para mover un expediente. Un trigger rechaza cualquier otro `UPDATE` de los campos que controla la FSM, incluso para el rol dueño de las tablas.
 3. **FKs compuestas `(tenant_id, id)`.** Además de la RLS, ninguna fila puede apuntar a otra de un tenant distinto: lo impide el motor relacional, no una política.
 4. **Evidencia append-only y encadenada.** Versiones, ratificaciones, respuestas y bitácora no admiten `UPDATE`/`DELETE`/`TRUNCATE`. La bitácora y los VoBo llevan hash encadenado: una manipulación se detecta (está probado).
 5. **Configurable sin código.** Tipologías, delegación, cadena de VoBo, compuertas por rigor, reglas normativas y plantillas son datos por tenant. Los requisitos legales mínimos (`hard_checks`) no se pueden desactivar.
@@ -58,7 +67,7 @@ La unidad revisora se resuelve **al expedir el CDP** y queda fija en el expedien
 
 ## 3. Seguridad: RLS jerárquica y contextual
 
-**Contexto de tenant.** `app.tenant_id()` lee `auth.jwt() → app_metadata.tenant_id`. `app_metadata` solo se escribe con `service_role` (en el aprovisionamiento), así que el usuario no puede cambiarlo. El subdominio sirve para la UX y el login, nunca para autorizar. El middleware rechaza la sesión si el slug del host no coincide con el tenant del JWT.
+**Contexto de tenant.** `app.tenant_id()` lee `auth.jwt() → app_metadata.tenant_id`. Esos claims los arma `withClm()` en el servidor a partir de la sesión de Auth.js (`userId`, `tenantId`); el navegador nunca los envía. El slug del login sirve para elegir la entidad, nunca para autorizar.
 
 **Funciones de política** (`SECURITY DEFINER`, `search_path = ''`, `stable`):
 
@@ -81,7 +90,7 @@ La unidad revisora se resuelve **al expedir el CDP** y queda fija en el expedien
 | `budget_certificates`, `contracts`, `guarantees`, `supervision_assignments`, `approval_steps` | heredado | **ninguno**: solo `transition()` |
 | configuración (8 tablas) | todo el tenant | ADMIN_ENTIDAD con scope TENANT |
 | `audit_events` | AUDITOR/ADMIN o quien vea el expediente | **ninguno** (lo escriben triggers y la FSM) |
-| `storage.objects` (bucket `artifacts`) | `{tenant}/{dossier}/…` ∧ `can_read_dossier` | `can_edit_dossier`. Sin UPDATE/DELETE: un archivo no se reemplaza |
+| Archivos (Vercel Blob) | la app sirve `{tenant}/{dossier}/…` solo si `app.can_read_dossier` | sube solo si `app.can_edit_dossier`; un archivo no se reemplaza, se versiona con otra ruta |
 
 **Privilegios por columna.** `authenticated` no tiene `UPDATE` sobre `dossiers.state`, `rigor_level`, `seal_hash`, etc. Un intento devuelve `permission denied` antes de llegar a la RLS.
 
@@ -114,7 +123,7 @@ La unidad revisora se resuelve **al expedir el CDP** y queda fija en el expedien
 
 ### 4.2 Transiciones (fuente: `ref.fsm_transitions`)
 
-Notación: **guard** = `hard_checks` legales (no desactivables) + compuertas del tenant según rigor (§5). **Actor** = roles × alcance (`ORIGIN` = cubre la unidad origen; `REVIEW` = cubre la unidad revisora; `ASSIGNED` = revisor asignado; `STEP` = titular del VoBo en turno; `SYSTEM` = `service_role`).
+Notación: **guard** = `hard_checks` legales (no desactivables) + compuertas del tenant según rigor (§5). **Actor** = roles × alcance (`ORIGIN` = cubre la unidad origen; `REVIEW` = cubre la unidad revisora; `ASSIGNED` = revisor asignado; `STEP` = titular del VoBo en turno; `SYSTEM` = tarea de sistema con el rol dueño).
 
 | De | Evento | A | Actor | Guards (hard) | Acción |
 |---|---|---|---|---|---|
@@ -159,7 +168,7 @@ stateDiagram-v2
   EJECUCION_HABILITADA --> [*]
 ```
 
-### 4.3 Semántica de `public.transition(dossier, event, expected_version, payload)`
+### 4.3 Semántica de `clm.transition(dossier, event, expected_version, payload)`
 
 1. `SELECT … FOR UPDATE` del expediente. Si `expected_version` no coincide → `CONFLICTO_DE_VERSION` (concurrencia optimista: dos coordinadores asignando a la vez no se pisan).
 2. Busca `(estado, evento)` en `ref.fsm_transitions`. Si no existe → `TRANSICION_INVALIDA`.
@@ -193,7 +202,7 @@ Cada compuerta es una rama de `app.run_check()` que devuelve `NULL` (pasa) o el 
 
 **Dos capas.** `hard_checks` en la FSM es el mínimo legal, igual para todas las entidades. `quality_gate_rules` es lo que cada tenant agrega, con `min_rigor`. El tenant puede **subir** la exigencia, nunca bajarla del mínimo. Valores por defecto (`app.bootstrap_tenant`): rigor 2 ⇒ 2 cotizaciones + verificación de integridad; rigor 3 ⇒ 3 cotizaciones + VoBo adicional del jefe de área.
 
-`public.preview_gates(dossier, event)` devuelve el mismo checklist sin mutar nada, para mostrarlo antes de que el usuario oprima el botón.
+`clm.preview_gates(dossier, event)` devuelve el mismo checklist sin mutar nada, para mostrarlo antes de que el usuario oprima el botón.
 
 ---
 
@@ -231,7 +240,7 @@ sequenceDiagram
 
 **Versiones.** `vMAYOR.MENOR`, donde `MAYOR = ronda de revisión + 1` y `MENOR` = guardado dentro de la ronda. Así v1.0, v1.1 son la elaboración, v2.0 es la primera subsanación, etc. La versión es un **snapshot** del borrador hecho por trigger: el cliente no puede mandar un contenido distinto del que versiona. `artifact_versions` es append-only.
 
-**Diff.** `public.diff_versions(a, b)` compara por bloque (`ADDED / REMOVED / MODIFIED / UNCHANGED`) y metadatos, entre versiones contiguas o arbitrarias. Corre con RLS (`security invoker`). El resaltado palabra a palabra dentro de un bloque `MODIFIED` es presentación: se hace en el cliente (p. ej. con el paquete `diff`, que **no está instalado**; agregarlo cuando se construya la vista).
+**Diff.** `clm.diff_versions(a, b)` compara por bloque (`ADDED / REMOVED / MODIFIED / UNCHANGED`) y metadatos, entre versiones contiguas o arbitrarias. Corre con RLS (`security invoker`). El resaltado palabra a palabra dentro de un bloque `MODIFIED` es presentación: se hace en el cliente (p. ej. con el paquete `diff`, que **no está instalado**; agregarlo cuando se construya la vista).
 
 **Bitácora** (`audit_events`):
 
@@ -246,7 +255,7 @@ sequenceDiagram
 
 ```mermaid
 flowchart LR
-  subgraph Ingesta[Ingesta - Edge Function + pg_cron, fuera del request]
+  subgraph Ingesta[Ingesta - Vercel Cron / job, fuera del request]
     S1[datos.gov.co SODA<br/>SECOP II contratos/procesos] --> N[Normalizar + UNSPSC]
     S2[Registros: RUES, SIRI, multas SECOP] --> RG[ref.company_registry / ref.sanctions<br/>identificadores de personas en SHA-256]
     N --> PD[ref.public_documents]
@@ -254,7 +263,7 @@ flowchart LR
     PD --> PB[ref.price_benchmarks<br/>p25/p50/p75 por UNSPSC]
   end
   subgraph Tenant[Privado por tenant]
-    AV[artifact_versions] -- DB webhook --> EMB[embed] --> TC[(public.tenant_chunks<br/>RLS por árbol)]
+    AV[artifact_versions] -- DB webhook --> EMB[embed] --> TC[(clm.tenant_chunks<br/>RLS por árbol)]
   end
   Q[Server Action aiAssist] --> M[match_context<br/>security invoker]
   M --> PC
@@ -285,7 +294,7 @@ flowchart LR
 
 1. `ENSAMBLAR_CONTRATO` toma la plantilla activa de la tipología y la rellena **en SQL** (`app.render_template`) con `app.assembly_fields(d)`: entidad, dependencia, expediente, CDP, contrato y sello. Todos son datos ya validados por compuertas previas. Un marcador sin dato aborta (`CAMPO_FALTANTE_EN_PLANTILLA`). El resultado es un artefacto `CONTRATO` (etapa CONTRACTUAL) versionado y sellado.
 2. La app renderiza el PDF (`@react-pdf/renderer`, ya instalado), calcula su SHA-256 y crea `signature_requests` (RLS: jurídica de la unidad revisora, estado ADJUDICADO, versión sellada del contrato).
-3. El adaptador del proveedor (`SignatureProvider` en `schema.ts`) crea el sobre. El webhook (Route Handler o Edge Function) valida la firma HMAC, actualiza la solicitud con `service_role` y dispara `transition(…, 'PERFECCIONAR')`, que solo `SYSTEM` puede ejecutar.
+3. El adaptador del proveedor (`SignatureProvider` en `schema.ts`) crea el sobre. El webhook (Route Handler) valida la firma HMAC, actualiza la solicitud con el rol dueño y dispara `transition(…, 'PERFECCIONAR')`, que solo `SYSTEM` puede ejecutar.
 
 Cambiar de proveedor = escribir un adaptador nuevo; la FSM no se toca.
 
@@ -300,56 +309,50 @@ Cambiar de proveedor = escribir un adaptador nuevo; la FSM no se toca.
 
 ---
 
-## 11. Arquitectura de aplicación (Next.js + Supabase)
+## 11. Arquitectura de aplicación (Next.js + Neon)
 
 ```mermaid
 flowchart TB
-  B[Navegador] -->|host: slug.dominio| MW[middleware.ts<br/>refresca sesión @supabase/ssr<br/>slug del host == app_metadata.tenant_slug]
-  MW --> RSC[Server Components<br/>lecturas con JWT del usuario → RLS]
-  B --> SA[Server Actions<br/>Zod → supabase.rpc / insert]
-  SA -->|JWT usuario| PG[(Postgres<br/>RLS + FSM + compuertas + auditoría)]
-  RSC -->|JWT usuario| PG
-  SA --> ST[Storage bucket artifacts<br/>tenant/dossier/artifact/version.pdf]
-  WH[Route Handler /api/firma/webhook<br/>HMAC] -->|service_role| PG
-  CRON[pg_cron / Edge Functions<br/>ingesta SECOP, benchmarks, refresh MV, embeddings] -->|service_role| PG
+  B[Navegador] --> MW[middleware.ts<br/>sesión Auth.js]
+  MW --> RSC[Server Components]
+  B --> SA[Server Actions<br/>Zod]
+  RSC & SA --> W[withClm<br/>set_config claims + SET LOCAL ROLE authenticated]
+  W --> PG[(Neon · schema clm<br/>RLS + FSM + compuertas + auditoría)]
+  SA --> BL[Vercel Blob<br/>tenant/dossier/artifact/version.pdf]
+  WH[Route Handler /api/firma/webhook<br/>HMAC] -->|rol dueño| PG
+  CRON[Vercel Cron<br/>ingesta SECOP, benchmarks, refresh MV, embeddings] -->|rol dueño| PG
   SA --> LLM[Proveedor LLM<br/>solo servidor]
 ```
 
-**Regla**: las rutas de usuario **nunca** usan `service_role`; solo lo hacen el webhook de firma, la ingesta y los jobs. Así la RLS se aplica en todo lo que el usuario dispara.
+**Regla**: toda ruta de usuario pasa por `withClm`. Solo el webhook de firma, la ingesta y los jobs usan el cliente Prisma directo (rol dueño). Así la RLS se aplica en todo lo que el usuario dispara.
 
-Patrón de Server Action (con `@supabase/ssr`, que **hay que instalar** junto con `@supabase/supabase-js`, y los tipos de `supabase gen types typescript`):
+`withClm` (`src/lib/db/clm.ts`) abre una transacción interactiva de Prisma, fija `request.jwt.claims` con `set_config(…, true)` y hace `SET LOCAL ROLE authenticated`. Ambos son locales a la transacción, así que funcionan con el pooler de Neon (pgbouncer en modo transacción) y no se filtran a otra petición.
 
 ```ts
-"use server";
-import { revalidatePath } from "next/cache";
-import { createClient } from "@/lib/supabase/server"; // createServerClient + cookies()
-import { transitionCommand, parseTransitionError, type TransitionCommand } from "@/modules/clm/schema";
-
 export async function dispararTransicion(input: TransitionCommand) {
   const cmd = transitionCommand.parse(input);
-  const supabase = await createClient();
-  const { data, error } = await supabase.rpc("transition", {
-    p_dossier: cmd.dossierId,
-    p_event: cmd.event,
-    p_expected_version: cmd.expectedVersion,
-    p_payload: cmd.payload,
-  });
-  if (error) return { ok: false as const, error: parseTransitionError(error) };
-  revalidatePath(`/expedientes/${cmd.dossierId}`);
-  return { ok: true as const, dossier: data };
+  try {
+    const [row] = await withClm((tx) => tx.$queryRaw<{ state: string }[]>`
+      select (clm.transition(${cmd.dossierId}::uuid, ${cmd.event}, ${cmd.expectedVersion}::int,
+                             ${JSON.stringify(cmd.payload)}::jsonb)).state::text as state`);
+    revalidatePath(`/expedientes/${cmd.dossierId}`);
+    return { ok: true, state: row.state };
+  } catch (err) {
+    // Prisma no expone el DETAIL de Postgres: con COMPUERTA_BLOQUEADA se relee clm.preview_gates.
+  }
 }
 ```
 
+- **Vista del expediente** (`/expedientes/[id]`): muestra estado, rigor, unidad revisora, sello, artefactos, observaciones pendientes y la cadena de VoBo vigente. Para cada evento **que la sesión puede ejecutar** (mismo criterio que `app.authorize`) pinta el checklist de `clm.preview_gates`, separando requisitos legales y reglas de la entidad. El botón se habilita solo con todo en verde. Los eventos con datos (CDP, adjudicación, garantías…) piden un JSON que la action valida con Zod.
 - **Subsanar y reenviar**: se insertan las respuestas (append-only) y luego se llama `REENVIAR`. No es una sola transacción, pero no hace falta: si falla el reenvío, las respuestas quedan registradas y el usuario reintenta. El `CONFLICTO_DE_VERSION` evita dobles envíos.
 - **Creación multi-área**: el expediente nace en la unidad origen del elaborador (RLS lo exige). El enrutamiento a jurídica lo decide la BD al expedir el CDP; la app nunca elige la unidad revisora.
-- **Subida de archivos**: la ruta `{tenant}/{dossier}/{artifact}/{version}.pdf` se valida en la política de Storage. El SHA-256 del archivo se guarda en la versión o en la solicitud de firma.
-- **Errores**: `COMPUERTA_BLOQUEADA` trae en `details` el JSON `[{check, hard, message}]`. La UI lo muestra como checklist (`parseTransitionError`).
+- **Habilitar usuarios**: un `User` de Prisma solo participa en el CLM si tiene fila en `clm.users` y membresías en `clm.user_memberships`. El rol de Prisma (`PERSONA_CONTRATACION`, etc.) da acceso a la ruta; las membresías deciden qué ve y qué puede hacer.
 
 ---
 
 ## 12. Cómo se probó
 
-`supabase/tests/clm_core_test.sql` recorre el ciclo completo con 7 usuarios de dos tenants y verifica:
+`prisma/tests/clm_core_test.sql` corre sobre la migración init de Prisma más la del CLM. Recorre el ciclo completo con 7 usuarios de dos tenants (ids `cuid`) y verifica:
 
 - **Aislamiento**: entre tenants, y jurídica que no ve el expediente antes de la radicación.
 - **IA**: el `CHECK` anti-alucinación, más las compuertas de autoría y de valores IA.
@@ -363,10 +366,12 @@ export async function dispararTransicion(input: TransitionCommand) {
 - **Rigor**: el rigor adaptativo sube con la desviación.
 
 ```bash
-bash supabase/tests/run.sh
+bash prisma/tests/run.sh
 ```
 
-`run.sh` usa Docker (`pgvector/pgvector:pg16`) con `_stubs_supabase.sql`, que emula `auth`/`storage`/roles. Contra un proyecto Supabase real, aplicar solo la migración. La validación de esta versión se hizo en PGlite (Postgres 17 + pgvector + pgcrypto), porque Docker Desktop no arrancó en la máquina de desarrollo.
+`run.sh` levanta un Postgres desechable con pgvector en Docker (`pgvector/pgvector:pg16`, como Neon); no toca ninguna base real. Esta versión se validó en PGlite (Postgres 17 + pgvector + pgcrypto), porque Docker Desktop no arrancó en la máquina de desarrollo: 408 sentencias OK. La vista se probó contra esa misma base vía `next dev`: login, checklist con fallas, `SOLICITAR_CDP`, error `CDP_INSUFICIENTE` y `EXPEDIR_CDP` con enrutamiento a jurídica.
+
+`tests/clm-schema.test.ts` (vitest) cubre los contratos Zod y la lectura de errores de Prisma.
 
 ---
 
@@ -383,7 +388,9 @@ bash supabase/tests/run.sh
 
 Pendientes de producto que esta capa ya soporta pero no cubre en UI:
 
-- vistas de checklist (`preview_gates`), diff y bitácora;
+- crear expediente y editar artefactos por bloques (hoy solo se ven y se transicionan);
+- vistas de diff y bitácora;
+- datos de arranque por entidad (unidades, membresías, tipologías, PAA): hoy se cargan por SQL;
 - conectores de ingesta;
 - adaptador real de firma;
 - pantalla de matriz de delegación.

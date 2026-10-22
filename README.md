@@ -40,4 +40,4 @@ npm run dev
 | [01 — Reglas de negocio CO](docs/01-reglas-negocio-co.md) | Parafiscales, seguridad social/PILA, vinculación |
 | [02 — Prompts de Grok](docs/02-prompts-grok.md) | Prompts versionados de IA |
 | [03 — RFC de arquitectura](docs/03-rfc-arquitectura.md) | Multi-tenancy, auth, storage, IA, PDF, mail |
-| [04 — Spec Core Engine CLM](docs/04-spec-clm-core.md) | FSM, compuertas, RLS jerárquica, auditoría, IA (Supabase + pgvector) |
+| [04 — Spec Core Engine CLM](docs/04-spec-clm-core.md) | FSM, compuertas, RLS jerárquica, auditoría, IA (Neon + pgvector, schema `clm`) |

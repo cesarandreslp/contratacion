@@ -198,6 +198,16 @@
 | Prueba end-to-end | `supabase/tests/clm_core_test.sql` (+ `run.sh` con Docker): ciclo completo BORRADOR → EJECUCION_HABILITADA, 2 tenants, 7 usuarios, bloqueos y manipulación detectada. | ✅ | Validada en PGlite (Postgres 17 + pgvector + pgcrypto): 348 sentencias OK. Docker Desktop no arrancó; `run.sh` sin ejecutar aún. |
 | Contratos TS | `src/modules/clm/schema.ts`: Zod de bloques con procedencia, transiciones (unión discriminada por evento), subsanación, IA, interfaz `SignatureProvider`, parser de errores de compuerta. | ✅ | `tsc --noEmit` limpio. |
 
+### Sesión 3 (cont.) — 22 de Octubre de 2026 — CLM sobre Neon + vista del expediente
+
+| Actividad | Descripción | Estado | Observaciones |
+|-----------|-------------|--------|--------------|
+| Decisión de stack | Se queda en Neon + Prisma + Auth.js. El SQL del CLM pasa a migración Prisma en el schema `clm`; `clm.tenants`/`clm.users` extienden `Tenant`/`User`; shim `auth.*` con claims por transacción. | ✅ | Variante Supabase eliminada (fuente única). |
+| Migración `20261022120000_clm_core` | Aplica sobre el init de Prisma. Metadatos de Neon revisados (solo lectura): PG 17, sin `auth`/`authenticated` previos, `vector` 0.8 y `pgcrypto` disponibles. | ✅ | Se aplica en Neon con `prisma migrate deploy` al desplegar en Vercel. |
+| Sesión RLS desde Prisma | `src/lib/db/clm.ts` (`withClm`): `set_config` de claims + `SET LOCAL ROLE authenticated` dentro de la transacción. | ✅ | Compatible con el pooler de Neon. |
+| Vista del expediente | `/expedientes` y `/expedientes/[id]`: estado, artefactos, observaciones, VoBo y checklist de compuertas por evento ejecutable; transiciones desde la UI. | ✅ | Probada en `next dev` contra PGlite: login, checklist, SOLICITAR_CDP, error CDP_INSUFICIENTE, EXPEDIR_CDP → jurídica. |
+| Pruebas | e2e SQL sobre init + CLM (408 sentencias OK en PGlite) + `tests/clm-schema.test.ts`. | ✅ | `prisma/tests/run.sh` (Docker) sin ejecutar: Docker Desktop no arranca. |
+
 ---
 
 ## Índice de documentación

@@ -10,10 +10,12 @@ const ACCESOS: Record<Role, { href: string; label: string }[]> = {
   ADMIN_TENANT: [
     { href: "/plantillas", label: "Plantillas" },
     { href: "/usuarios", label: "Usuarios" },
+    { href: "/expedientes", label: "Expedientes precontractuales" },
   ],
   PERSONA_CONTRATACION: [
     { href: "/contratos", label: "Contratos" },
     { href: "/revisiones", label: "Revisiones pendientes" },
+    { href: "/expedientes", label: "Expedientes precontractuales" },
   ],
   SUPERVISOR: [{ href: "/supervision", label: "Informe de supervisión (mes actual)" }],
   CONTRATISTA: [
