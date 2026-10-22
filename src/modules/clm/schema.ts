@@ -1,8 +1,8 @@
 import { z } from "zod";
 
-// Contratos de API del Core Engine CLM (límite cliente ↔ Server Actions ↔ RPC).
-// Espejo de supabase/migrations/20261022000000_clm_core.sql. La BD es la fuente
-// de verdad: Zod rechaza temprano y con buen mensaje, la BD vuelve a validar.
+// Contratos de API del Core Engine CLM (límite cliente ↔ Server Actions ↔ BD).
+// Espejo de prisma/migrations/20261022120000_clm_core (schema `clm`). La BD es la
+// fuente de verdad: Zod rechaza temprano y con buen mensaje, la BD vuelve a validar.
 // Ver docs/04-spec-clm-core.md.
 
 const uuid = z.string().uuid();
@@ -163,26 +163,32 @@ export interface GateFailure {
 
 export type TransitionError =
   | { kind: "COMPUERTA_BLOQUEADA"; failures: GateFailure[] }
-  | { kind: "CONFLICTO_DE_VERSION"; currentVersion: number }
+  | { kind: "CONFLICTO_DE_VERSION" }
   | { kind: "PERMISO"; code: string }
-  | { kind: "OTRO"; code: string; detail?: string };
+  | { kind: "OTRO"; code: string };
 
-/** Traduce el error de PostgREST de public.transition() a algo que la UI pinta. */
-export function parseTransitionError(err: { message: string; details?: string | null }): TransitionError {
-  switch (err.message) {
-    case "COMPUERTA_BLOQUEADA":
-      return { kind: "COMPUERTA_BLOQUEADA", failures: JSON.parse(err.details ?? "[]") as GateFailure[] };
-    case "CONFLICTO_DE_VERSION":
-      return { kind: "CONFLICTO_DE_VERSION", currentVersion: Number(err.details) };
-    case "ROL_NO_AUTORIZADO":
-    case "NO_ES_REVISOR_ASIGNADO":
-    case "NO_LE_CORRESPONDE_ESTE_VOBO":
-    case "CONFLICTO_DE_FUNCIONES":
-    case "SOLO_SISTEMA":
-      return { kind: "PERMISO", code: err.message };
-    default:
-      return { kind: "OTRO", code: err.message, detail: err.details ?? undefined };
-  }
+const CODIGOS_PERMISO = new Set([
+  "ROL_NO_AUTORIZADO", "NO_ES_REVISOR_ASIGNADO", "NO_LE_CORRESPONDE_ESTE_VOBO",
+  "CONFLICTO_DE_FUNCIONES", "SOLO_SISTEMA", "NO_AUTENTICADO",
+]);
+
+/**
+ * Código de negocio de un error lanzado por PL/pgSQL (p. ej. COMPUERTA_BLOQUEADA).
+ * Prisma lo entrega como "... Message: `CODIGO`"; null si no es uno nuestro
+ * (los errores de RLS/privilegios de Postgres vienen en minúsculas).
+ */
+export function clmErrorCode(err: unknown): string | null {
+  const msg = err instanceof Error ? err.message : String(err);
+  const m = /Message: `([A-Z][A-Z_]+)`/.exec(msg) ?? /\b([A-Z]{3,}_[A-Z_]{3,})\b/.exec(msg);
+  return m?.[1] ?? null;
+}
+
+/** Clasifica el código que lanzó clm.transition() (las fallas de compuerta se leen aparte). */
+export function transitionErrorFromCode(code: string | null, failures: GateFailure[] = []): TransitionError {
+  if (code === "COMPUERTA_BLOQUEADA") return { kind: "COMPUERTA_BLOQUEADA", failures };
+  if (code === "CONFLICTO_DE_VERSION") return { kind: "CONFLICTO_DE_VERSION" };
+  if (code && CODIGOS_PERMISO.has(code)) return { kind: "PERMISO", code };
+  return { kind: "OTRO", code: code ?? "ERROR_DESCONOCIDO" };
 }
 
 // ---------------------------------------------------------------- co-piloto IA

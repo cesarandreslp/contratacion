@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Corre la migración + prueba e2e en un Postgres desechable con pgvector.
+# Corre la migración init de Prisma + la del CLM + la prueba e2e en un Postgres
+# desechable con pgvector (como Neon). No toca ninguna base de datos real.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 name=clm-core-test
@@ -9,6 +10,6 @@ trap 'docker rm -f "$name" >/dev/null' EXIT
 until docker exec "$name" pg_isready -U postgres -q; do sleep 1; done
 sleep 1
 run() { docker exec -i "$name" psql -U postgres -v ON_ERROR_STOP=1 -q "$@"; }
-run < tests/_stubs_supabase.sql
-run < migrations/20261022000000_clm_core.sql
+run < migrations/20260622000000_init/migration.sql
+run < migrations/20261022120000_clm_core/migration.sql
 run < tests/clm_core_test.sql
