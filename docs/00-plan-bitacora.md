@@ -189,6 +189,15 @@
 - [ ] **Validar con PO (Cesar):** naturaleza del "documento de parafiscales" + tarifas/IBC vigentes.
 - [ ] 🔐 **Rotar contraseñas de Neon y GitHub compartidas en el chat.**
 
+### Sesión 3 — 22 de Octubre de 2026 — Core Engine CLM (especificación ejecutable)
+
+| Actividad | Descripción | Estado | Observaciones |
+|-----------|-------------|--------|--------------|
+| Especificación Core Engine CLM | `docs/04-spec-clm-core.md`: organigrama multi-nivel, RLS jerárquica por estado, FSM formal (12 estados, 22 eventos), compuertas legales + por rigor, bucle de revisión, VoBo encadenados, sello, auditoría encadenada, co-piloto IA con procedencia, firma agnóstica, gemelo de datos. | ✅ | Adopta Supabase + RLS: **choca con el stack actual (Prisma/Neon/Auth.js)** → decisión pendiente (ver §0 del doc). |
+| Esquema SQL | `supabase/migrations/20261022000000_clm_core.sql`: DDL, FKs compuestas `(tenant_id,id)`, RLS, grants por columna, `public.transition()`, compuertas, auditoría hash-chain, `match_context` (pgvector), integridad de mercado, ensamblado de minuta. | ✅ | No toca `prisma/`. |
+| Prueba end-to-end | `supabase/tests/clm_core_test.sql` (+ `run.sh` con Docker): ciclo completo BORRADOR → EJECUCION_HABILITADA, 2 tenants, 7 usuarios, bloqueos y manipulación detectada. | ✅ | Validada en PGlite (Postgres 17 + pgvector + pgcrypto): 348 sentencias OK. Docker Desktop no arrancó; `run.sh` sin ejecutar aún. |
+| Contratos TS | `src/modules/clm/schema.ts`: Zod de bloques con procedencia, transiciones (unión discriminada por evento), subsanación, IA, interfaz `SignatureProvider`, parser de errores de compuerta. | ✅ | `tsc --noEmit` limpio. |
+
 ---
 
 ## Índice de documentación
@@ -197,4 +206,5 @@
 - [01 — Reglas de negocio CO](01-reglas-negocio-co.md)
 - [02 — Prompts de Grok](02-prompts-grok.md)
 - [03 — RFC de arquitectura](03-rfc-arquitectura.md)
+- [04 — Spec Core Engine CLM](04-spec-clm-core.md)
 - [`prisma/schema.prisma`](../prisma/schema.prisma) — fuente de verdad del modelo de datos

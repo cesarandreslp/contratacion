@@ -32,8 +32,9 @@ jobs:
       - name: Tests
         run: npm test
 
+      # `npm run build` corre `prisma migrate deploy` (lo usa Vercel); en CI no hay BD.
       - name: Build
-        run: npm run build
+        run: npx next build
         env:
           # Valores dummy: el build no se conecta a la BD, solo compila.
           DATABASE_URL: postgresql://user:pass@localhost:5432/db
